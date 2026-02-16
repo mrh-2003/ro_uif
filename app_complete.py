@@ -284,7 +284,8 @@ def pagina_analisis():
         "📈 Reportes Generales": [
             "Top 10 por Columnas",
             "Ranking de Operaciones",
-            "Ranking de Agencias"
+            "Ranking de Agencias",
+            "Minería en Origen de Fondos"
         ],
         "👥 Análisis de Actores": [
             "Ejecutantes Comunes",
@@ -367,25 +368,29 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
         ranking, stats = analizador.reporte_2_ranking_post_transferencia_internacional()
         
         if not ranking.empty:
-            col1, col2 = st.columns(2)
+            # Gráfico Pie Grande Arriba
+            fig = viz.crear_pie(
+                ranking.reset_index(),
+                'cantidad_operaciones',
+                'operacion_siguiente',
+                'Operaciones Posteriores a Transferencias Internacionales'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            st.divider()
+            
+            col1, col2 = st.columns([1, 2])
             
             with col1:
+                st.subheader("Resumen")
                 st.metric("Total Recepciones Internacionales", f"{stats['total_recepciones']:,}")
                 st.metric("Con Operación Posterior", f"{stats['total_con_operacion_posterior']:,}")
                 st.metric("Porcentaje", f"{stats['porcentaje']:.2f}%")
             
             with col2:
-                fig = viz.crear_pie(
-                    ranking.reset_index(),
-                    'cantidad_operaciones',
-                    'operacion_siguiente',
-                    'Operaciones Posteriores a Transferencias Internacionales'
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            
-            st.subheader("Detalle del Ranking")
-            st.dataframe(ranking, use_container_width=True)
-            descargar_excel(ranking, "post_transferencia_internacional.xlsx")
+                st.subheader("Detalle del Ranking")
+                st.dataframe(ranking, use_container_width=True)
+                descargar_excel(ranking, "post_transferencia_internacional.xlsx")
         else:
             st.info("No se encontraron transferencias internacionales o operaciones posteriores")
 
@@ -433,13 +438,17 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
                         df_red.append({
                             'ejecutante': idx[:20],
                             'cliente': cliente[:20],
-                            'monto': row['monto_total']
+                            'monto': row['monto_total'],
+                            'actividad_origen': row.get('actividad', ''), # Actividad ejecutante (nombre col rename en analizador)
+                            'actividad_destino': 'Cliente' 
                         })
                 
                 if df_red:
                     df_red = pd.DataFrame(df_red)
                     net = viz.crear_grafo_red(df_red, 'ejecutante', 'cliente', 'monto')
-                    net.save_graph('temp_graph.html')
+                    # PyVis generates file, we read it
+                    # Note: crear_grafo_red now handles JavaScript injection internally and saves to temp_graph.html
+                    # We just need to read it back.
                     with open('temp_graph.html', 'r', encoding='utf-8') as f:
                         html_string = f.read()
                     components.html(html_string, height=800)
@@ -490,13 +499,14 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
                         df_red.append({
                             'ordenante': idx[:20],
                             'cliente': cliente[:20],
-                            'monto': row['monto_total']
+                            'monto': row['monto_total'],
+                            'actividad_origen': row.get('actividad', ''), # Actividad ordenante (nombre col rename en analizador)
+                            'actividad_destino': 'Cliente'
                         })
                 
                 if df_red:
                     df_red = pd.DataFrame(df_red)
                     net = viz.crear_grafo_red(df_red, 'ordenante', 'cliente', 'monto')
-                    net.save_graph('temp_graph.html')
                     with open('temp_graph.html', 'r', encoding='utf-8') as f:
                         html_string = f.read()
                     components.html(html_string, height=800)
@@ -547,13 +557,14 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
                         df_red.append({
                             'beneficiario': idx[:20],
                             'cliente': cliente[:20],
-                            'monto': row['monto_total']
+                            'monto': row['monto_total'],
+                            'actividad_origen': row.get('actividad', ''), # Actividad beneficiario (nombre col rename en analizador)
+                            'actividad_destino': 'Cliente'
                         })
                 
                 if df_red:
                     df_red = pd.DataFrame(df_red)
                     net = viz.crear_grafo_red(df_red, 'beneficiario', 'cliente', 'monto')
-                    net.save_graph('temp_graph.html')
                     with open('temp_graph.html', 'r', encoding='utf-8') as f:
                         html_string = f.read()
                     components.html(html_string, height=800)
@@ -694,12 +705,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             
             with col1:
                 top = resultado.head(20).reset_index()
+                # Recortar nombre cliente para gráfico
+                top['cliente_short'] = top['CODUNICOCLI_13_enc'].astype(str).str[:8]
+                
                 fig = viz.crear_barras_horizontales(
                     top,
-                    'CODUNICOCLI_13_enc',
+                    'cliente_short',
                     'porcentaje_efectivo',
                     'Top 20 Clientes por % Efectivo (Operaciones)',
-                    'Cliente',
+                    'Cliente (Init)',
                     '% Efectivo',
                     log_scale=log_scale
                 )
@@ -707,13 +721,16 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             
             with col2:
                 top = resultado.sort_values('porcentaje_monto_efectivo', ascending=False).head(20).reset_index()
+                # Recortar nombre cliente para gráfico
+                top['cliente_short'] = top['CODUNICOCLI_13_enc'].astype(str).str[:8]
+                
                 fig = viz.crear_barras_horizontales(
                     top,
-                    'CODUNICOCLI_13_enc',
+                    'cliente_short',
                     'porcentaje_monto_efectivo',
-                    'Top 20 Clientes por % Efectivo (Monto)',
-                    'Cliente',
-                    '% Efectivo',
+                    'Top 20 Clientes por % Monto en Efectivo',
+                    'Cliente (Init)',
+                    '% Monto Efectivo',
                     log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
@@ -803,8 +820,23 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
     elif tipo_analisis == "Operaciones Simultáneas":
         st.header("⚡ Operaciones Simultáneas")
         
-        minutos = st.slider("Ventana de tiempo (minutos)", 5, 60, 30)
-        resultado, stats = analizador.reporte_12_operaciones_simultaneas(minutos)
+        col_unit, col_val = st.columns([1, 3])
+        
+        with col_unit:
+            unidad_tiempo = st.selectbox("Unidad de Tiempo", ["Minutos", "Horas", "Días"])
+        
+        with col_val:
+            if unidad_tiempo == "Minutos":
+                valor_tiempo = st.slider("Ventana de tiempo (minutos)", 0, 60, 30, key="slider_min")
+                minutos_totales = valor_tiempo
+            elif unidad_tiempo == "Horas":
+                valor_tiempo = st.slider("Ventana de tiempo (horas)", 1, 24, 1, key="slider_hour")
+                minutos_totales = valor_tiempo * 60
+            else: # Días
+                valor_tiempo = st.slider("Ventana de tiempo (días)", 1, 7, 1, key="slider_day")
+                minutos_totales = valor_tiempo * 24 * 60
+        
+        resultado, stats = analizador.reporte_12_operaciones_simultaneas(minutos_totales)
         
         if not resultado.empty:
             col1, col2, col3 = st.columns(3)
@@ -1091,6 +1123,81 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No hay datos de agencias")
+
+    elif tipo_analisis == "Minería en Origen de Fondos":
+        st.header("⛏️ Actividad Económica - Minería en Origen de Fondos")
+        st.markdown("Análisis de operaciones donde el **origen de fondos** menciona 'minera' o 'minería'.")
+        
+        resultados, total_ops = analizador.reporte_19_actividad_mineria()
+        
+        st.metric("Total Operaciones Detectadas", f"{total_ops:,}")
+        
+        if total_ops > 0:
+            tab1, tab2, tab3 = st.tabs(["Ejecutantes", "Ordenantes", "Beneficiarios"])
+            
+            log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_mineria")
+            
+            with tab1:
+                st.subheader("Actividad Económica - Ejecutantes")
+                df = resultados.get('ejecutantes', pd.DataFrame())
+                if not df.empty:
+                    st.dataframe(df, use_container_width=True)
+                    descargar_excel(df, "mineria_ejecutantes.xlsx")
+                    
+                    fig = viz.crear_barras_horizontales(
+                        df.head(15).reset_index(),
+                        'DesOcupSOL',
+                        'cantidad_operaciones',
+                        'Top 15 Actividades (Ejecutantes) en Minería',
+                        'Actividad',
+                        'Cantidad',
+                        log_scale=log_scale
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No hay datos de ejecutantes")
+            
+            with tab2:
+                st.subheader("Actividad Económica - Ordenantes")
+                df = resultados.get('ordenantes', pd.DataFrame())
+                if not df.empty:
+                    st.dataframe(df, use_container_width=True)
+                    descargar_excel(df, "mineria_ordenantes.xlsx")
+                    
+                    fig = viz.crear_barras_horizontales(
+                        df.head(15).reset_index(),
+                        'DesOcupOrd',
+                        'cantidad_operaciones',
+                        'Top 15 Actividades (Ordenantes) en Minería',
+                        'Actividad',
+                        'Cantidad',
+                        log_scale=log_scale
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No hay datos de ordenantes")
+            
+            with tab3:
+                st.subheader("Actividad Económica - Beneficiarios")
+                df = resultados.get('beneficiarios', pd.DataFrame())
+                if not df.empty:
+                    st.dataframe(df, use_container_width=True)
+                    descargar_excel(df, "mineria_beneficiarios.xlsx")
+                    
+                    fig = viz.crear_barras_horizontales(
+                        df.head(15).reset_index(),
+                        'DesOcupBen',
+                        'cantidad_operaciones',
+                        'Top 15 Actividades (Beneficiarios) en Minería',
+                        'Actividad',
+                        'Cantidad',
+                        log_scale=log_scale
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No hay datos de beneficiarios")
+        else:
+            st.warning("No se encontraron operaciones relacionadas con minería en el origen de fondos.")
 
 def pagina_informe():
     st.title("📄 Generación de Informe PDF")

@@ -240,48 +240,97 @@ class AnalizadorUIF:
         return resultado
     
     def reporte_12_operaciones_simultaneas(self, minutos=30):
+        # Asegurar ordenamiento
         df_sorted = self.df.sort_values(['CODUNICOCLI_13_enc', 'fec_operacion', 'hora_operacion'])
         
         resultados = []
         
+        # Palabras clave para identificar tipos de operación
+        # Se asume que todo lo que no es ingreso explícito podría ser una salida si mueve fondos
+        # Pero para ser precisos, buscaremos salidas explícitas para confirmar "disposición"
+        
+        def es_ingreso(descripcion):
+            d = str(descripcion).upper()
+            return any(x in d for x in ['RECEPCION', 'DEPOSITO', 'ABONO', 'CREDITO', 'ENTRADA'])
+
+        def es_egreso(descripcion):
+            d = str(descripcion).upper()
+            # Si es transferencia y no dice recepción/entrada, asumimos salida
+            if 'TRANSFERENCIA' in d and not any(x in d for x in ['RECEPCION', 'ENTRADA', 'RECIBID']):
+                return True
+            return any(x in d for x in ['RETIRO', 'ENVIO', 'PAGO', 'DEBITO', 'SALIDA', 'CHEQUE'])
+        
         for cliente in df_sorted['CODUNICOCLI_13_enc'].unique():
             df_cliente = df_sorted[df_sorted['CODUNICOCLI_13_enc'] == cliente].copy()
-            df_cliente['datetime'] = pd.to_datetime(
-                df_cliente['fec_operacion'].astype(str) + ' ' + df_cliente['hora_operacion'].astype(str),
-                errors='coerce'
-            )
             
+            # Crear columna datetime robusta
+            try:
+                # Convertir a string y combinar, manejando NaNs
+                fec = df_cliente['fec_operacion'].astype(str)
+                hora = df_cliente['hora_operacion'].astype(str)
+                df_cliente['datetime'] = pd.to_datetime(fec + ' ' + hora, errors='coerce')
+            except Exception:
+                continue
+                
+            # Filtrar filas donde datetime falló
+            df_cliente = df_cliente.dropna(subset=['datetime'])
+            
+            if df_cliente.empty:
+                continue
+
             for i in range(len(df_cliente) - 1):
                 op1 = df_cliente.iloc[i]
+                desc1 = op1['destipopereportesbs']
                 
-                if op1['destipopereportesbs'] not in ['TRANSFERENCIAS INTERNACIONALES (RECEPCION DE FONDOS)',
-                                                        'DEPOSITOS EN CUENTA CORRIENTE',
-                                                        'DEPOSITOS EN CUENTA DE AHORRO']:
+                # Solo analizamos si la operación inicial es un INGRESO
+                if not es_ingreso(desc1):
                     continue
                 
                 tiempo_limite = op1['datetime'] + timedelta(minutes=minutos)
                 
-                ops_posteriores = df_cliente[
-                    (df_cliente['datetime'] > op1['datetime']) &
+                # Buscar operaciones posteriores dentro de la ventana de tiempo
+                # que sean EGRESOS (disposición de fondos)
+                ops_candidatas = df_cliente[
+                    (df_cliente['datetime'] > op1['datetime']) & 
                     (df_cliente['datetime'] <= tiempo_limite)
                 ]
                 
-                if not ops_posteriores.empty:
-                    monto_dispuesto = ops_posteriores['mtotrx'].sum()
-                    porcentaje = (monto_dispuesto / op1['mtotrx'] * 100) if op1['mtotrx'] > 0 else 0
+                if ops_candidatas.empty:
+                    continue
                     
-                    if porcentaje >= 70:
-                        operaciones = ops_posteriores['destipopereportesbs'].value_counts().to_dict()
-                        resultados.append({
-                            'cliente': cliente,
-                            'monto_recibido': op1['mtotrx'],
-                            'fecha_recepcion': op1['fec_operacion'],
-                            'tipo_recepcion': op1['destipopereportesbs'],
-                            'monto_dispuesto': monto_dispuesto,
-                            'porcentaje_dispuesto': porcentaje,
-                            'num_operaciones': len(ops_posteriores),
-                            'operaciones_realizadas': operaciones
-                        })
+                # Filtramos solo las que son egresos
+                ops_egresos = ops_candidatas[ops_candidatas['destipopereportesbs'].apply(es_egreso)]
+                
+                if ops_egresos.empty:
+                    continue
+                
+                monto_dispuesto = ops_egresos['mtotrx'].sum()
+                
+                # Evitar división por cero
+                if op1['mtotrx'] <= 0:
+                    continue
+                    
+                porcentaje = (monto_dispuesto / op1['mtotrx'] * 100)
+                
+                # Umbral reducido al 50% ("mayor parte")
+                if porcentaje >= 50:
+                    # Resumen de operaciones de salida
+                    ops_detalle = ops_egresos['destipopereportesbs'].value_counts().to_dict()
+                    str_ops = ", ".join([f"{k} (x{v})" for k, v in ops_detalle.items()])
+                    
+                    resultados.append({
+                        'cliente': cliente,
+                        'fecha_recepcion': op1['fec_operacion'],
+                        'hora_recepcion': op1['hora_operacion'],
+                        'tipo_recepcion': desc1,
+                        'monto_recibido': op1['mtotrx'],
+                        'monto_dispuesto': monto_dispuesto,
+                        'porcentaje_dispuesto': round(porcentaje, 2),
+                        'tiempo_transcurrido_min': round((ops_egresos['datetime'].max() - op1['datetime']).total_seconds() / 60, 1),
+                        'cantidad_operaciones_salida': len(ops_egresos),
+                        'detalle_salidas': str_ops,
+                        'alerta': 'Posible Testaferro/Intermediario'
+                    })
         
         df_resultado = pd.DataFrame(resultados)
         
@@ -419,6 +468,34 @@ class AnalizadorUIF:
         }).sort_values('cantidad_operaciones', ascending=False)
         
         return ranking
+    
+    def reporte_19_actividad_mineria(self):
+        # Filtrar operacions donde el origen del dinero tiene "minera" o "mineria" (case insensitive)
+        mask = self.df['desorigendinero'].fillna('').str.contains('minera|mineria', case=False, regex=True)
+        df_mineria = self.df[mask].copy()
+        
+        resultados = {}
+        
+        # Helper para agrupar
+        def agrupar_por_actividad(df, col_actividad):
+            if df.empty or col_actividad not in df.columns:
+                return pd.DataFrame()
+            
+            return df.groupby(col_actividad).agg({
+                'id_operacion': 'count',
+                'mtotrx': 'sum',
+                'CODUNICOCLI_13_enc': 'nunique'
+            }).rename(columns={
+                'id_operacion': 'cantidad_operaciones',
+                'mtotrx': 'monto_total',
+                'CODUNICOCLI_13_enc': 'clientes_unicos'
+            }).sort_values('cantidad_operaciones', ascending=False)
+            
+        resultados['ejecutantes'] = agrupar_por_actividad(df_mineria, 'DesOcupSOL')
+        resultados['ordenantes'] = agrupar_por_actividad(df_mineria, 'DesOcupOrd')
+        resultados['beneficiarios'] = agrupar_por_actividad(df_mineria, 'DesOcupBen')
+        
+        return resultados, len(df_mineria)
     
     def reporte_top10_columnas(self):
         resultados = {}
