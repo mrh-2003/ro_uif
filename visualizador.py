@@ -31,6 +31,38 @@ class Visualizador:
         )
         
         return fig
+
+    @staticmethod
+    def crear_barras_horizontales(df, x_col, y_col, title, x_label, y_label, color_map=None, log_scale=False):
+        if isinstance(df, pd.Series):
+            df = df.reset_index()
+            if len(df.columns) == 2:
+                x_col = df.columns[0]
+                y_col = df.columns[1]
+        
+        # Asegurar que la columna categórica sea string para evitar interpretación numérica
+        df[x_col] = df[x_col].astype(str)
+        
+        fig = px.bar(
+            df.head(20),
+            x=y_col,
+            y=x_col,
+            title=title,
+            labels={x_col: x_label, y_col: y_label},
+            color=y_col,
+            color_continuous_scale='Viridis',
+            orientation='h',
+            log_x=log_scale
+        )
+        
+        fig.update_layout(
+            yaxis={'categoryorder':'total ascending', 'type': 'category'},
+            height=500,
+            hovermode='y unified',
+            showlegend=False
+        )
+        
+        return fig
     
     @staticmethod
     def crear_pie(df, values_col, names_col, title):

@@ -11,7 +11,7 @@ from generador_informe import GeneradorInforme
 import plotly.graph_objects as go
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Sistema Análisis UIF", layout="wide", page_icon="🔍")
+st.set_page_config(page_title="Sistema Análisis", layout="wide", page_icon="🔍")
 
 # Fix: Forzar recarga si la instancia en sesión no tiene el método nuevo (get_todas_operaciones)
 if 'db_manager' not in st.session_state or not hasattr(st.session_state.db_manager, 'get_todas_operaciones'):
@@ -312,7 +312,22 @@ def pagina_analisis():
     categoria_sel = st.selectbox("Categoría", list(categorias.keys()))
     analisis_sel = st.selectbox("Análisis", categorias[categoria_sel])
     
+    # Inicializar estado si no existe
+    if 'analisis_activo' not in st.session_state:
+        st.session_state.analisis_activo = False
+        
+    # Detectar cambio en la selección para resetear
+    if 'last_analisis' not in st.session_state:
+        st.session_state.last_analisis = analisis_sel
+    
+    if st.session_state.last_analisis != analisis_sel:
+        st.session_state.analisis_activo = False
+        st.session_state.last_analisis = analisis_sel
+
     if st.button("🚀 Ejecutar Análisis", type="primary"):
+        st.session_state.analisis_activo = True
+        
+    if st.session_state.analisis_activo:
         ejecutar_analisis(analisis_sel, analizador, viz, df_operaciones)
 
 def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
@@ -333,13 +348,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             
             with col2:
                 if not df.empty:
-                    fig = viz.crear_barras(
+                    log_scale = st.checkbox("Escala Logarítmica", value=False, key=f"log_{nombre}")
+                    fig = viz.crear_barras_horizontales(
                         df.reset_index(),
                         df.index.name if df.index.name else 'index',
                         'cantidad',
                         f'Top 10 - {nombre}',
                         nombre,
-                        'Cantidad'
+                        'Cantidad',
+                        log_scale=log_scale
                     )
                     st.plotly_chart(fig, use_container_width=True)
             
@@ -380,27 +397,31 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(resultado, use_container_width=True)
             descargar_excel(resultado, "ejecutantes_comunes.xlsx")
             
+            log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_ejecutantes")
+            
             col1, col2 = st.columns(2)
             
             with col1:
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     resultado.head(20).reset_index(),
                     'doc_ejecutante_encriptado',
                     'cantidad_clientes',
                     'Top 20 Ejecutantes por Cantidad de Clientes',
                     'Ejecutante',
-                    'Cantidad de Clientes'
+                    'Cantidad de Clientes',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     resultado.head(20).reset_index(),
                     'doc_ejecutante_encriptado',
                     'monto_total',
                     'Top 20 Ejecutantes por Monto Total',
                     'Ejecutante',
-                    'Monto Total'
+                    'Monto Total',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -433,27 +454,31 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(resultado, use_container_width=True)
             descargar_excel(resultado, "ordenantes_comunes.xlsx")
             
+            log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_ordenantes")
+            
             col1, col2 = st.columns(2)
             
             with col1:
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     resultado.head(20).reset_index(),
                     'doc_ordenante_encriptado',
                     'cantidad_clientes',
                     'Top 20 Ordenantes por Cantidad de Clientes',
                     'Ordenante',
-                    'Cantidad de Clientes'
+                    'Cantidad de Clientes',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     resultado.head(20).reset_index(),
                     'doc_ordenante_encriptado',
                     'monto_total',
                     'Top 20 Ordenantes por Monto Total',
                     'Ordenante',
-                    'Monto Total'
+                    'Monto Total',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -486,27 +511,31 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(resultado, use_container_width=True)
             descargar_excel(resultado, "beneficiarios_comunes.xlsx")
             
+            log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_beneficiarios")
+            
             col1, col2 = st.columns(2)
             
             with col1:
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     resultado.head(20).reset_index(),
                     'doc_beneficiario_encriptado',
                     'cantidad_clientes',
                     'Top 20 Beneficiarios por Cantidad de Clientes',
                     'Beneficiario',
-                    'Cantidad de Clientes'
+                    'Cantidad de Clientes',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     resultado.head(20).reset_index(),
                     'doc_beneficiario_encriptado',
                     'monto_total',
                     'Top 20 Beneficiarios por Monto Total',
                     'Beneficiario',
-                    'Monto Total'
+                    'Monto Total',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -539,29 +568,33 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(ranking, use_container_width=True)
             descargar_excel(ranking, "ranking_ejecutantes.xlsx")
             
+            log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_rank_ejecutantes")
+            
             col1, col2 = st.columns(2)
             
             with col1:
                 top = ranking.head(15).reset_index()
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     top,
                     'doc_ejecutante_encriptado',
                     'num_operaciones',
                     'Top 15 Ejecutantes por Número de Operaciones',
                     'Ejecutante',
-                    'Operaciones'
+                    'Operaciones',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
                 top = ranking.head(15).reset_index()
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     top,
                     'doc_ejecutante_encriptado',
                     'monto_total',
                     'Top 15 Ejecutantes por Monto',
                     'Ejecutante',
-                    'Monto Total'
+                    'Monto Total',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
         else:
@@ -575,29 +608,33 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(ranking, use_container_width=True)
             descargar_excel(ranking, "ranking_ordenantes.xlsx")
             
+            log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_rank_ordenantes")
+            
             col1, col2 = st.columns(2)
             
             with col1:
                 top = ranking.head(15).reset_index()
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     top,
                     'doc_ordenante_encriptado',
                     'num_operaciones',
                     'Top 15 Ordenantes por Número de Operaciones',
                     'Ordenante',
-                    'Operaciones'
+                    'Operaciones',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
                 top = ranking.head(15).reset_index()
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     top,
                     'doc_ordenante_encriptado',
                     'monto_total',
                     'Top 15 Ordenantes por Monto',
                     'Ordenante',
-                    'Monto Total'
+                    'Monto Total',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
         else:
@@ -611,29 +648,33 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(ranking, use_container_width=True)
             descargar_excel(ranking, "ranking_beneficiarios.xlsx")
             
+            log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_rank_beneficiarios")
+            
             col1, col2 = st.columns(2)
             
             with col1:
                 top = ranking.head(15).reset_index()
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     top,
                     'doc_beneficiario_encriptado',
                     'num_operaciones',
                     'Top 15 Beneficiarios por Número de Operaciones',
                     'Beneficiario',
-                    'Operaciones'
+                    'Operaciones',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
                 top = ranking.head(15).reset_index()
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     top,
                     'doc_beneficiario_encriptado',
                     'monto_total',
                     'Top 15 Beneficiarios por Monto',
                     'Beneficiario',
-                    'Monto Total'
+                    'Monto Total',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
         else:
@@ -647,29 +688,33 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(resultado, use_container_width=True)
             descargar_excel(resultado, "porcentaje_efectivo.xlsx")
             
+            log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_efectivo")
+            
             col1, col2 = st.columns(2)
             
             with col1:
                 top = resultado.head(20).reset_index()
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     top,
                     'CODUNICOCLI_13_enc',
                     'porcentaje_efectivo',
                     'Top 20 Clientes por % Efectivo (Operaciones)',
                     'Cliente',
-                    '% Efectivo'
+                    '% Efectivo',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
                 top = resultado.sort_values('porcentaje_monto_efectivo', ascending=False).head(20).reset_index()
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     top,
                     'CODUNICOCLI_13_enc',
                     'porcentaje_monto_efectivo',
                     'Top 20 Clientes por % Efectivo (Monto)',
                     'Cliente',
-                    '% Efectivo'
+                    '% Efectivo',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
         else:
@@ -683,29 +728,33 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(resultado, use_container_width=True)
             descargar_excel(resultado, "cuentas_ordenantes_comunes.xlsx")
             
+            log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_ctas_ordenantes")
+            
             col1, col2 = st.columns(2)
             
             with col1:
                 top = resultado.head(15).reset_index()
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     top,
                     'codcta20ordenante',
                     'cantidad_clientes',
                     'Top 15 Cuentas Ordenantes por Clientes',
                     'Cuenta',
-                    'Clientes'
+                    'Clientes',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
                 top = resultado.head(15).reset_index()
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     top,
                     'codcta20ordenante',
                     'monto_total',
                     'Top 15 Cuentas Ordenantes por Monto',
                     'Cuenta',
-                    'Monto'
+                    'Monto',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
         else:
@@ -719,29 +768,33 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(resultado, use_container_width=True)
             descargar_excel(resultado, "cuentas_beneficiarias_comunes.xlsx")
             
+            log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_ctas_beneficiarias")
+            
             col1, col2 = st.columns(2)
             
             with col1:
                 top = resultado.head(15).reset_index()
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     top,
                     'codcta20beneficiario',
                     'cantidad_clientes',
                     'Top 15 Cuentas Beneficiarias por Clientes',
                     'Cuenta',
-                    'Clientes'
+                    'Clientes',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
                 top = resultado.head(15).reset_index()
-                fig = viz.crear_barras(
+                fig = viz.crear_barras_horizontales(
                     top,
                     'codcta20beneficiario',
                     'monto_total',
                     'Top 15 Cuentas Beneficiarias por Monto',
                     'Cuenta',
-                    'Monto'
+                    'Monto',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
         else:
@@ -787,13 +840,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(ranking_cant, use_container_width=True)
             descargar_excel(ranking_cant, "ranking_operaciones_cantidad.xlsx")
             
-            fig = viz.crear_barras(
+            log_scale_cant = st.checkbox("Escala Logarítmica", value=False, key="log_ops_cant")
+            fig = viz.crear_barras_horizontales(
                 ranking_cant.head(15).reset_index(),
                 'destipopereportesbs',
                 'cantidad_operaciones',
                 'Top 15 Operaciones por Cantidad',
                 'Tipo de Operación',
-                'Cantidad'
+                'Cantidad',
+                log_scale=log_scale_cant
             )
             st.plotly_chart(fig, use_container_width=True)
         
@@ -801,13 +856,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(ranking_monto, use_container_width=True)
             descargar_excel(ranking_monto, "ranking_operaciones_monto.xlsx")
             
-            fig = viz.crear_barras(
+            log_scale_monto = st.checkbox("Escala Logarítmica", value=False, key="log_ops_monto")
+            fig = viz.crear_barras_horizontales(
                 ranking_monto.head(15).reset_index(),
                 'destipopereportesbs',
                 'monto_total',
                 'Top 15 Operaciones por Monto',
                 'Tipo de Operación',
-                'Monto Total'
+                'Monto Total',
+                log_scale=log_scale_monto
             )
             st.plotly_chart(fig, use_container_width=True)
 
@@ -821,13 +878,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(ranking_cant, use_container_width=True)
             descargar_excel(ranking_cant, "actividad_ejecutantes_cantidad.xlsx")
             
-            fig = viz.crear_barras(
+            log_scale_c = st.checkbox("Escala Logarítmica", value=False, key="log_act_eje_cant")
+            fig = viz.crear_barras_horizontales(
                 ranking_cant.head(15).reset_index(),
                 'DesOcupSOL',
                 'cantidad_operaciones',
                 'Top 15 Actividades Ejecutantes por Cantidad',
                 'Actividad',
-                'Cantidad'
+                'Cantidad',
+                log_scale=log_scale_c
             )
             st.plotly_chart(fig, use_container_width=True)
         
@@ -835,13 +894,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(ranking_monto, use_container_width=True)
             descargar_excel(ranking_monto, "actividad_ejecutantes_monto.xlsx")
             
-            fig = viz.crear_barras(
+            log_scale_m = st.checkbox("Escala Logarítmica", value=False, key="log_act_eje_monto")
+            fig = viz.crear_barras_horizontales(
                 ranking_monto.head(15).reset_index(),
                 'DesOcupSOL',
                 'monto_total',
                 'Top 15 Actividades Ejecutantes por Monto',
                 'Actividad',
-                'Monto Total'
+                'Monto Total',
+                log_scale=log_scale_m
             )
             st.plotly_chart(fig, use_container_width=True)
     
@@ -855,13 +916,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(ranking_cant, use_container_width=True)
             descargar_excel(ranking_cant, "actividad_ordenantes_cantidad.xlsx")
             
-            fig = viz.crear_barras(
+            log_scale_c = st.checkbox("Escala Logarítmica", value=False, key="log_act_ord_cant")
+            fig = viz.crear_barras_horizontales(
                 ranking_cant.head(15).reset_index(),
                 'DesOcupOrd',
                 'cantidad_operaciones',
                 'Top 15 Actividades Ordenantes por Cantidad',
                 'Actividad',
-                'Cantidad'
+                'Cantidad',
+                log_scale=log_scale_c
             )
             st.plotly_chart(fig, use_container_width=True)
         
@@ -869,13 +932,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(ranking_monto, use_container_width=True)
             descargar_excel(ranking_monto, "actividad_ordenantes_monto.xlsx")
             
-            fig = viz.crear_barras(
+            log_scale_m = st.checkbox("Escala Logarítmica", value=False, key="log_act_ord_monto")
+            fig = viz.crear_barras_horizontales(
                 ranking_monto.head(15).reset_index(),
                 'DesOcupOrd',
                 'monto_total',
                 'Top 15 Actividades Ordenantes por Monto',
                 'Actividad',
-                'Monto Total'
+                'Monto Total',
+                log_scale=log_scale_m
             )
             st.plotly_chart(fig, use_container_width=True)
     
@@ -889,13 +954,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(ranking_cant, use_container_width=True)
             descargar_excel(ranking_cant, "actividad_beneficiarios_cantidad.xlsx")
             
-            fig = viz.crear_barras(
+            log_scale_c = st.checkbox("Escala Logarítmica", value=False, key="log_act_ben_cant")
+            fig = viz.crear_barras_horizontales(
                 ranking_cant.head(15).reset_index(),
                 'DesOcupBen',
                 'cantidad_operaciones',
                 'Top 15 Actividades Beneficiarios por Cantidad',
                 'Actividad',
-                'Cantidad'
+                'Cantidad',
+                log_scale=log_scale_c
             )
             st.plotly_chart(fig, use_container_width=True)
         
@@ -903,13 +970,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(ranking_monto, use_container_width=True)
             descargar_excel(ranking_monto, "actividad_beneficiarios_monto.xlsx")
             
-            fig = viz.crear_barras(
+            log_scale_m = st.checkbox("Escala Logarítmica", value=False, key="log_act_ben_monto")
+            fig = viz.crear_barras_horizontales(
                 ranking_monto.head(15).reset_index(),
                 'DesOcupBen',
                 'monto_total',
                 'Top 15 Actividades Beneficiarios por Monto',
                 'Actividad',
-                'Monto Total'
+                'Monto Total',
+                log_scale=log_scale_m
             )
             st.plotly_chart(fig, use_container_width=True)
     
@@ -929,13 +998,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
                 st.dataframe(resultados['bombas_compresores'], use_container_width=True)
                 descargar_excel(resultados['bombas_compresores'], "riesgo_bombas_compresores.xlsx")
                 
-                fig = viz.crear_barras(
+                log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_riesgo_bombas")
+                fig = viz.crear_barras_horizontales(
                     resultados['bombas_compresores'].head(15).reset_index(),
                     'CODUNICOCLI_13_enc',
                     'monto_total',
                     'Clientes - Bombas/Compresores',
                     'Cliente',
-                    'Monto Total'
+                    'Monto Total',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:
@@ -947,13 +1018,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
                 st.dataframe(resultados['seguridad_privada'], use_container_width=True)
                 descargar_excel(resultados['seguridad_privada'], "riesgo_seguridad_privada.xlsx")
                 
-                fig = viz.crear_barras(
+                log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_riesgo_seguridad")
+                fig = viz.crear_barras_horizontales(
                     resultados['seguridad_privada'].head(15).reset_index(),
                     'CODUNICOCLI_13_enc',
                     'monto_total',
                     'Clientes - Seguridad Privada',
                     'Cliente',
-                    'Monto Total'
+                    'Monto Total',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:
@@ -965,13 +1038,15 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
                 st.dataframe(resultados['transporte'], use_container_width=True)
                 descargar_excel(resultados['transporte'], "riesgo_transporte.xlsx")
                 
-                fig = viz.crear_barras(
+                log_scale = st.checkbox("Escala Logarítmica", value=False, key="log_riesgo_transporte")
+                fig = viz.crear_barras_horizontales(
                     resultados['transporte'].head(15).reset_index(),
                     'CODUNICOCLI_13_enc',
                     'monto_total',
                     'Clientes - Transporte',
                     'Cliente',
-                    'Monto Total'
+                    'Monto Total',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:
@@ -982,30 +1057,36 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
         ranking = analizador.reporte_18_ranking_agencias()
         
         if not ranking.empty:
+            ranking = ranking.reset_index()
+            ranking['codigo_ubigeo'] = ranking['codigo_ubigeo'].astype(str)
             st.dataframe(ranking, use_container_width=True)
             descargar_excel(ranking, "ranking_agencias.xlsx")
+            
+            log_scale = st.checkbox("Escala Logarítmica", value=False)
             
             col1, col2 = st.columns(2)
             
             with col1:
-                fig = viz.crear_barras(
-                    ranking.head(20).reset_index(),
+                fig = viz.crear_barras_horizontales(
+                    ranking.head(20),
                     'codigo_ubigeo',
                     'cantidad_operaciones',
                     'Top 20 Agencias por Cantidad',
                     'Ubigeo',
-                    'Operaciones'
+                    'Operaciones',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                fig = viz.crear_barras(
-                    ranking.head(20).reset_index(),
+                fig = viz.crear_barras_horizontales(
+                    ranking.head(20),
                     'codigo_ubigeo',
                     'monto_total',
                     'Top 20 Agencias por Monto',
                     'Ubigeo',
-                    'Monto Total'
+                    'Monto Total',
+                    log_scale=log_scale
                 )
                 st.plotly_chart(fig, use_container_width=True)
         else:
@@ -1203,7 +1284,7 @@ def pagina_informe():
                 st.error(f"Error al generar informe: {str(e)}")
 
 def main():
-    st.sidebar.title("🔍 Sistema Análisis UIF")
+    st.sidebar.title("🔍 Sistema Análisis")
     
     menu = st.sidebar.radio(
         "Menú Principal",
