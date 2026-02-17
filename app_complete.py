@@ -365,7 +365,10 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
     
     elif tipo_analisis == "Post Transferencia Internacional":
         st.header("🌍 Análisis Post Transferencia Internacional")
-        ranking, stats = analizador.reporte_2_ranking_post_transferencia_internacional()
+        
+        dias_seguimiento = st.slider("Días de Seguimiento Posterior", min_value=1, max_value=30, value=7)
+        
+        ranking, stats, casos = analizador.reporte_2_ranking_post_transferencia_internacional(dias_seguimiento)
         
         if not ranking.empty:
             # Gráfico Pie Grande Arriba
@@ -384,13 +387,48 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             with col1:
                 st.subheader("Resumen")
                 st.metric("Total Recepciones Internacionales", f"{stats['total_recepciones']:,}")
-                st.metric("Con Operación Posterior", f"{stats['total_con_operacion_posterior']:,}")
+                st.metric("Con Salidas Posteriores", f"{stats['total_con_salidas']:,}")
                 st.metric("Porcentaje", f"{stats['porcentaje']:.2f}%")
             
             with col2:
-                st.subheader("Detalle del Ranking")
+                st.subheader("Ranking de Tipos de Operación Siguiente")
                 st.dataframe(ranking, use_container_width=True)
-                descargar_excel(ranking, "post_transferencia_internacional.xlsx")
+                descargar_excel(ranking, "ranking_primeras_operaciones.xlsx")
+
+            st.divider()
+            st.subheader("📋 Detalle de Movimientos por Transferencia")
+            st.info(f"Mostrando salidas detectadas hasta la siguiente transferencia internacional o hasta {dias_seguimiento} días después.")
+            
+            if casos:
+                for i, caso in enumerate(casos):
+                    monto_entrada = caso['entrada'].get('mtotrx', 0)
+                    moneda = caso['entrada'].get('nbrmonedadestino', 'N/A')
+                    cliente = caso['entrada'].get('CODUNICOCLI_13_enc', 'Desconocido')
+                    fec = pd.to_datetime(caso['entrada'].get('fec_operacion')).strftime('%Y-%m-%d')
+                    
+                    titulo = f"Caso #{i+1} | Cliente: {cliente} | Fecha: {fec} | Monto: {monto_entrada:,.2f} {moneda}"
+                    
+                    with st.expander(titulo, expanded=False):
+                        col_a, col_b = st.columns([1, 2])
+                        
+                        with col_a:
+                            st.markdown("#### 📥 Entrada (Origen)")
+                            campos_clave = [
+                                'fec_operacion', 'hora_operacion', 'mtotrx', 'nbrmonedadestino', 
+                                'destipopereportesbs', 'codigo_ubigeo', 'descanal'
+                            ]
+                            entrada_data = caso['entrada']
+                            entrada_filtrada = {k: entrada_data[k] for k in campos_clave if k in entrada_data.index}
+                            st.table(pd.DataFrame([entrada_filtrada]).T.rename(columns={0: 'Valor'}))
+
+                        with col_b:
+                            st.markdown("#### 📤 Salidas Detectadas")
+                            df_salidas = caso['salidas']
+                            st.dataframe(df_salidas, use_container_width=True)
+                            descargar_excel(df_salidas, f"salidas_caso_{i+1}.xlsx")
+            else:
+                st.warning("No se encontraron casos con salidas posteriores relevantes en la ventana de tiempo analizada.")
+
         else:
             st.info("No se encontraron transferencias internacionales o operaciones posteriores")
 

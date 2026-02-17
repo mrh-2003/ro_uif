@@ -12,61 +12,128 @@ class AnalizadorUIF:
         if 'hora_operacion' in self.df.columns:
             self.df['hora_operacion'] = pd.to_datetime(self.df['hora_operacion'], format='%H:%M:%S', errors='coerce').dt.time
     
-    def reporte_2_ranking_post_transferencia_internacional(self):
+    def reporte_2_ranking_post_transferencia_internacional(self, dias_seguimiento=7):
         df_recepcion = self.df[self.df['destipopereportesbs'] == 'TRANSFERENCIAS INTERNACIONALES (RECEPCION DE FONDOS)'].copy()
         
         if df_recepcion.empty:
-            return pd.DataFrame(), {}
+            return pd.DataFrame(), {}, []
         
+        # Asegurar orden
         df_recepcion = df_recepcion.sort_values(['CODUNICOCLI_13_enc', 'fec_operacion', 'hora_operacion'])
         
-        resultados = []
-        
+        # Helper para identificar salidas (reutilizando lógica similar a operaciones simultáneas)
+        def es_salida(desc):
+            d = str(desc).upper()
+            if 'TRANSFERENCIA' in d and not any(x in d for x in ['RECEPCION', 'ENTRADA', 'RECIBID', 'ABONO']):
+                return True
+            return any(x in d for x in ['RETIRO', 'ENVIO', 'PAGO', 'DEBITO', 'SALIDA', 'CHEQUE', 'EFECTIVO'])
+
+        resultados_agrupados = []
+        first_ops = [] # Para el ranking global
+
         for cliente in df_recepcion['CODUNICOCLI_13_enc'].unique():
-            df_cliente = self.df[self.df['CODUNICOCLI_13_enc'] == cliente].sort_values(['fec_operacion', 'hora_operacion'])
-            recepciones = df_recepcion[df_recepcion['CODUNICOCLI_13_enc'] == cliente]
+            # Filtrar y ordenar operaciones del cliente
+            df_cliente = self.df[self.df['CODUNICOCLI_13_enc'] == cliente].sort_values(['fec_operacion', 'hora_operacion']).reset_index(drop=True)
             
-            for idx, recepcion in recepciones.iterrows():
+            # Obtener índices de las recepciones internacionales
+            indices_recepciones = df_cliente.index[
+                df_cliente['destipopereportesbs'] == 'TRANSFERENCIAS INTERNACIONALES (RECEPCION DE FONDOS)'
+            ].tolist()
+            
+            if not indices_recepciones:
+                continue
+                
+            for i, idx_recepcion in enumerate(indices_recepciones):
+                recepcion = df_cliente.iloc[idx_recepcion]
+                
                 fecha_recepcion = recepcion['fec_operacion']
+                # Si hora es NaT o similar, asumir inicio del día para la ventana
                 hora_recepcion = recepcion['hora_operacion']
                 
-                ops_posteriores = df_cliente[
-                    (df_cliente['fec_operacion'] > fecha_recepcion) |
-                    ((df_cliente['fec_operacion'] == fecha_recepcion) & 
-                     (df_cliente['hora_operacion'] > hora_recepcion))
-                ]
+                # Definir límite por tiempo (días de seguimiento)
+                fecha_limite_dias = fecha_recepcion + timedelta(days=dias_seguimiento)
                 
-                if not ops_posteriores.empty:
-                    siguiente_op = ops_posteriores.iloc[0]
-                    resultados.append({
+                # Definir límite por siguiente recepción (si existe)
+                idx_siguiente_recepcion = indices_recepciones[i+1] if i + 1 < len(indices_recepciones) else len(df_cliente)
+                
+                # Segmento de operaciones potenciales: desde la siguiente fila hasta antes de la próxima recepción
+                # IMPORTANTE: El segmento termina en idx_siguiente_recepcion (no inclusivo)
+                segmento = df_cliente.iloc[idx_recepcion + 1 : idx_siguiente_recepcion].copy()
+                
+                if segmento.empty:
+                    continue
+                    
+                # Aplicar filtro de fecha (hasta N días)
+                # Nota: Asumimos que están ordenados, pero filtramos explícitamente por seguridad
+                segmento = segmento[segmento['fec_operacion'] <= fecha_limite_dias]
+                
+                if segmento.empty:
+                    continue
+                
+                # 1. Para estadísticas globales (primera op inmediatamente siguiente)
+                first_op = segmento.iloc[0]
+                first_ops.append({
+                    'operacion_siguiente': first_op['destipopereportesbs'],
+                    'monto_siguiente': first_op['mtotrx'],
+                    'cliente': cliente
+                })
+                
+                # 2. Filtrar SALIDAS
+                ops_salidas = segmento[segmento['destipopereportesbs'].apply(es_salida)].copy()
+                
+                if not ops_salidas.empty:
+                    # Seleccionar y renombrar columnas solicitadas
+                    columnas_deseadas = {
+                        'destipopereportesbs': 'Tipo Transacción',
+                        'doc_beneficiario_encriptado': 'Beneficiario',
+                        'doc_ordenante_encriptado': 'Ordenante',
+                        'doc_ejecutante_encriptado': 'Ejecutante',
+                        'fec_operacion': 'Fecha',
+                        'hora_operacion': 'Hora',
+                        'mtotrx': 'Monto',
+                        'nbrmonedadestino': 'Moneda',
+                        'DesOcupBen': 'Ocupación Ben.',
+                        'DesOcupSOL': 'Ocupación Sol.',
+                        'DesOcupOrd': 'Ocupación Ord.',
+                        'descanal': 'Canal',
+                        'ACT_ECONOMICA': 'Actividad Económica'
+                    }
+                    
+                    # Filtrar columnas que realmente existen en el DF
+                    cols_to_keep = [c for c in columnas_deseadas.keys() if c in ops_salidas.columns]
+                    ops_display = ops_salidas[cols_to_keep].rename(columns=columnas_deseadas)
+                    
+                    # Formatear Fechas para que se vean bien
+                    if 'Fecha' in ops_display.columns:
+                        ops_display['Fecha'] = ops_display['Fecha'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notnull(x) else '')
+                    
+                    # Guardamos el caso completo
+                    resultados_agrupados.append({
                         'cliente': cliente,
-                        'monto_recepcion': recepcion['mtotrx'],
-                        'fecha_recepcion': fecha_recepcion,
-                        'operacion_siguiente': siguiente_op['destipopereportesbs'],
-                        'monto_siguiente': siguiente_op['mtotrx'],
-                        'fecha_siguiente': siguiente_op['fec_operacion']
+                        'entrada': recepcion,
+                        'salidas': ops_display
                     })
         
-        df_resultado = pd.DataFrame(resultados)
-        
-        if df_resultado.empty:
-            return pd.DataFrame(), {}
-        
-        ranking = df_resultado.groupby('operacion_siguiente').agg({
-            'cliente': 'count',
-            'monto_siguiente': 'sum'
-        }).rename(columns={
-            'cliente': 'cantidad_operaciones',
-            'monto_siguiente': 'monto_total'
-        }).sort_values('cantidad_operaciones', ascending=False)
+        # Generar Ranking (Compatibilidad)
+        df_first_ops = pd.DataFrame(first_ops)
+        if not df_first_ops.empty:
+            ranking = df_first_ops.groupby('operacion_siguiente').agg({
+                'cliente': 'count',
+                'monto_siguiente': 'sum'
+            }).rename(columns={
+                'cliente': 'cantidad_operaciones',
+                'monto_siguiente': 'monto_total'
+            }).sort_values('cantidad_operaciones', ascending=False)
+        else:
+            ranking = pd.DataFrame()
         
         stats = {
             'total_recepciones': len(df_recepcion),
-            'total_con_operacion_posterior': len(df_resultado),
-            'porcentaje': len(df_resultado) / len(df_recepcion) * 100 if len(df_recepcion) > 0 else 0
+            'total_con_salidas': len(resultados_agrupados),
+            'porcentaje': (len(resultados_agrupados) / len(df_recepcion) * 100) if len(df_recepcion) > 0 else 0
         }
         
-        return ranking, stats
+        return ranking, stats, resultados_agrupados
     
     def reporte_3_ejecutantes_comunes(self):
         df_ejecutantes = self.df[self.df['doc_ejecutante_encriptado'].notna()].copy()
