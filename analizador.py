@@ -313,16 +313,12 @@ class AnalizadorUIF:
         resultados = []
         
         # Palabras clave para identificar tipos de operación
-        # Se asume que todo lo que no es ingreso explícito podría ser una salida si mueve fondos
-        # Pero para ser precisos, buscaremos salidas explícitas para confirmar "disposición"
-        
         def es_ingreso(descripcion):
             d = str(descripcion).upper()
             return any(x in d for x in ['RECEPCION', 'DEPOSITO', 'ABONO', 'CREDITO', 'ENTRADA'])
 
         def es_egreso(descripcion):
             d = str(descripcion).upper()
-            # Si es transferencia y no dice recepción/entrada, asumimos salida
             if 'TRANSFERENCIA' in d and not any(x in d for x in ['RECEPCION', 'ENTRADA', 'RECIBID']):
                 return True
             return any(x in d for x in ['RETIRO', 'ENVIO', 'PAGO', 'DEBITO', 'SALIDA', 'CHEQUE'])
@@ -332,14 +328,12 @@ class AnalizadorUIF:
             
             # Crear columna datetime robusta
             try:
-                # Convertir a string y combinar, manejando NaNs
                 fec = df_cliente['fec_operacion'].astype(str)
                 hora = df_cliente['hora_operacion'].astype(str)
                 df_cliente['datetime'] = pd.to_datetime(fec + ' ' + hora, errors='coerce')
             except Exception:
                 continue
                 
-            # Filtrar filas donde datetime falló
             df_cliente = df_cliente.dropna(subset=['datetime'])
             
             if df_cliente.empty:
@@ -355,8 +349,7 @@ class AnalizadorUIF:
                 
                 tiempo_limite = op1['datetime'] + timedelta(minutes=minutos)
                 
-                # Buscar operaciones posteriores dentro de la ventana de tiempo
-                # que sean EGRESOS (disposición de fondos)
+                # Buscar operaciones posteriores dentro de la ventana de tiempo (EGRESOS)
                 ops_candidatas = df_cliente[
                     (df_cliente['datetime'] > op1['datetime']) & 
                     (df_cliente['datetime'] <= tiempo_limite)
@@ -365,7 +358,6 @@ class AnalizadorUIF:
                 if ops_candidatas.empty:
                     continue
                     
-                # Filtramos solo las que son egresos
                 ops_egresos = ops_candidatas[ops_candidatas['destipopereportesbs'].apply(es_egreso)]
                 
                 if ops_egresos.empty:
@@ -373,26 +365,43 @@ class AnalizadorUIF:
                 
                 monto_dispuesto = ops_egresos['mtotrx'].sum()
                 
-                # Evitar división por cero
                 if op1['mtotrx'] <= 0:
                     continue
                     
                 porcentaje = (monto_dispuesto / op1['mtotrx'] * 100)
                 
-                # Umbral reducido al 50% ("mayor parte")
                 if porcentaje >= 50:
-                    # Resumen de operaciones de salida
+                    # Recopilar información detallada
                     ops_detalle = ops_egresos['destipopereportesbs'].value_counts().to_dict()
                     str_ops = ", ".join([f"{k} (x{v})" for k, v in ops_detalle.items()])
                     
+                    # Nuevos campos solicitados:
+                    # 1. Ordenante (Origen): Quien envió el dinero al cliente en op1
+                    ordenante_origen = op1.get('doc_ordenante_encriptado', 'No registrado')
+                    if pd.isna(ordenante_origen): ordenante_origen = 'No registrado'
+                    
+                    # 2. Beneficiarios (Destino): A quienes envió el dinero el cliente en ops_egresos
+                    if 'doc_beneficiario_encriptado' in ops_egresos.columns:
+                        lista_ben = ops_egresos['doc_beneficiario_encriptado'].dropna().unique().tolist()
+                        beneficiarios_destino = ", ".join([str(x) for x in lista_ben])
+                    else:
+                        beneficiarios_destino = "No disponible"
+                        
+                    # 3. Horas de salida
+                    lista_horas = ops_egresos['hora_operacion'].astype(str).unique().tolist()
+                    horas_salida = ", ".join(lista_horas)
+
                     resultados.append({
                         'cliente': cliente,
                         'fecha_recepcion': op1['fec_operacion'],
                         'hora_recepcion': op1['hora_operacion'],
+                        'ordenante_origen': ordenante_origen,     # NUEVO: De quién recibió
                         'tipo_recepcion': desc1,
                         'monto_recibido': op1['mtotrx'],
                         'monto_dispuesto': monto_dispuesto,
                         'porcentaje_dispuesto': round(porcentaje, 2),
+                        'horas_salida': horas_salida,             # NUEVO: Hora salida
+                        'beneficiarios_destino': beneficiarios_destino, # NUEVO: A quién envió
                         'tiempo_transcurrido_min': round((ops_egresos['datetime'].max() - op1['datetime']).total_seconds() / 60, 1),
                         'cantidad_operaciones_salida': len(ops_egresos),
                         'detalle_salidas': str_ops,

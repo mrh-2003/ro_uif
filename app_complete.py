@@ -888,12 +888,13 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
             st.dataframe(resultado, use_container_width=True)
             descargar_excel(resultado, "operaciones_simultaneas.xlsx")
             
+            # Corrección aplicada aquí: size_col='cantidad_operaciones_salida'
             fig = viz.crear_scatter(
                 resultado,
                 'monto_recibido',
                 'porcentaje_dispuesto',
                 'Relación Monto Recibido vs % Dispuesto',
-                size_col='num_operaciones',
+                size_col='cantidad_operaciones_salida',
                 color_col='porcentaje_dispuesto'
             )
             st.plotly_chart(fig, use_container_width=True)
