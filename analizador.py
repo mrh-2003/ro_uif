@@ -306,7 +306,7 @@ class AnalizadorUIF:
         
         return resultado
     
-    def reporte_12_operaciones_simultaneas(self, minutos=30, tolerancia_porcentaje=10):
+    def reporte_12_operaciones_simultaneas(self, minutos=30, tolerancia_porcentaje=10, min_ops=1):
         # Clasificación estricta de operaciones
         INFLOWS = [
             'TRANSFERENCIAS ENTRE CUENTAS DE DIFERENTES ENTIDADES (RECEPCION DE FONDOS)',
@@ -336,6 +336,11 @@ class AnalizadorUIF:
             if d in INFLOWS: return 'ENTRADA'
             if d in OUTFLOWS: return 'SALIDA'
             return 'NEUTRO'
+
+        def es_valido(nodo):
+            n = str(nodo).upper()
+            invalidos = ['DESCONOCIDO', 'NO REGISTRADO', 'NAN', 'NONE', '', 'NO DISPONIBLE']
+            return n not in invalidos
 
         df_sorted = self.df.sort_values(['CODUNICOCLI_13_enc', 'fec_operacion', 'hora_operacion'])
         
@@ -387,6 +392,12 @@ class AnalizadorUIF:
                 if candidates.empty:
                     continue
                 
+                # Validar cantidad de operaciones (1 entrada + N salidas)
+                total_ops_caso = 1 + len(candidates)
+                # NOTA: Regla de minimo de operaciones NO APLICA para P1 (Entrada -> Salida directa)
+                # if total_ops_caso < min_ops:
+                #    continue
+
                 monto_in = row_in['mtotrx']
                 min_match = monto_in * (1 - tolerancia_porcentaje/100)
                 max_match = monto_in * (1 + tolerancia_porcentaje/100)
@@ -410,6 +421,7 @@ class AnalizadorUIF:
                         'Hora': row_in['hora_operacion'],
                         'Monto Entrante': monto_in,
                         'Monto Saliente': total_out,
+                        'Cantidad Operaciones': total_ops_caso,
                         'Diferencia %': round(abs(monto_in - total_out)/monto_in * 100, 2) if monto_in > 0 else 0,
                         'Detalle': f"Entrada: {row_in['destipopereportesbs']} | Salidas: {desc_salidas}"
                     })
@@ -418,24 +430,27 @@ class AnalizadorUIF:
                     origen = row_in.get('doc_ordenante_encriptado', 'Desconocido')
                     if pd.isna(origen): origen = 'Desconocido'
                     
-                    edges.append({
-                        'source': str(origen),
-                        'target': str(cliente),
-                        'amount': float(monto_in),
-                        'label': 'Entrada (P1)',
-                        'caso_id': caso_id
-                    })
+                    if es_valido(origen) and es_valido(cliente):
+                        edges.append({
+                            'source': str(origen),
+                            'target': str(cliente),
+                            'amount': float(monto_in),
+                            'label': 'Entrada (P1)',
+                            'caso_id': caso_id
+                        })
                     
                     for _, row_out in candidates.iterrows():
                         destino = row_out.get('doc_beneficiario_encriptado', 'Desconocido')
                         if pd.isna(destino): destino = 'Desconocido'
-                        edges.append({
-                            'source': str(cliente),
-                            'target': str(destino),
-                            'amount': float(row_out['mtotrx']),
-                            'label': 'Salida (P1)',
-                            'caso_id': caso_id
-                        })
+                        
+                        if es_valido(cliente) and es_valido(destino):
+                            edges.append({
+                                'source': str(cliente),
+                                'target': str(destino),
+                                'amount': float(row_out['mtotrx']),
+                                'label': 'Salida (P1)',
+                                'caso_id': caso_id
+                            })
 
             # --- PRIORIDAD 2: SOLO SALIDAS CASI INSTANTANEAS (Ráfaga) ---
             # Buscamos ráfagas de al menos 2 salidas en la ventana
@@ -457,8 +472,13 @@ class AnalizadorUIF:
                 
                 group = df_cli[mask_group]
                 
-                # Deben ser al menos 2 para considerar "ráfaga" o "simultáneas" si no hay entrada
+                # Deben ser al menos 2 para considerar "ráfaga"
                 if len(group) >= 2:
+                    
+                    # Validar filtro de cantidad
+                    if len(group) < min_ops:
+                        continue
+
                     used_indices.update(group.index.tolist())
                     
                     total_amt = group['mtotrx'].sum()
@@ -473,6 +493,7 @@ class AnalizadorUIF:
                         'Hora': row['hora_operacion'],
                         'Monto Entrante': 0,
                         'Monto Saliente': total_amt,
+                        'Cantidad Operaciones': len(group),
                         'Diferencia %': 0,
                         'Detalle': f"{len(group)} salidas detectadas en {minutos} min"
                     })
@@ -480,13 +501,15 @@ class AnalizadorUIF:
                     for _, row_out in group.iterrows():
                         destino = row_out.get('doc_beneficiario_encriptado', 'Desconocido')
                         if pd.isna(destino): destino = 'Desconocido'
-                        edges.append({
-                            'source': str(cliente),
-                            'target': str(destino),
-                            'amount': float(row_out['mtotrx']),
-                            'label': 'Salida (P2)',
-                            'caso_id': caso_id
-                        })
+                        
+                        if es_valido(cliente) and es_valido(destino):
+                            edges.append({
+                                'source': str(cliente),
+                                'target': str(destino),
+                                'amount': float(row_out['mtotrx']),
+                                'label': 'Salida (P2)',
+                                'caso_id': caso_id
+                            })
 
             # --- PRIORIDAD 3: SOLO ENTRADAS CASI INSTANTANEAS (Ráfaga) ---
             for i in indices_list:
@@ -508,6 +531,11 @@ class AnalizadorUIF:
                 group = df_cli[mask_group]
                 
                 if len(group) >= 2:
+                    
+                    # Validar filtro de cantidad
+                    if len(group) < min_ops:
+                        continue
+
                     used_indices.update(group.index.tolist())
                     
                     total_amt = group['mtotrx'].sum()
@@ -522,6 +550,7 @@ class AnalizadorUIF:
                         'Hora': row['hora_operacion'],
                         'Monto Entrante': total_amt,
                         'Monto Saliente': 0,
+                        'Cantidad Operaciones': len(group),
                         'Diferencia %': 0,
                         'Detalle': f"{len(group)} entradas detectadas en {minutos} min"
                     })
@@ -529,13 +558,15 @@ class AnalizadorUIF:
                     for _, row_in_g in group.iterrows():
                         origen = row_in_g.get('doc_ordenante_encriptado', 'Desconocido')
                         if pd.isna(origen): origen = 'Desconocido'
-                        edges.append({
-                            'source': str(origen),
-                            'target': str(cliente),
-                            'amount': float(row_in_g['mtotrx']),
-                            'label': 'Entrada (P3)',
-                            'caso_id': caso_id
-                        })
+                        
+                        if es_valido(origen) and es_valido(cliente):
+                            edges.append({
+                                'source': str(origen),
+                                'target': str(cliente),
+                                'amount': float(row_in_g['mtotrx']),
+                                'label': 'Entrada (P3)',
+                                'caso_id': caso_id
+                            })
 
         df_casos = pd.DataFrame(casos)
         df_edges = pd.DataFrame(edges)

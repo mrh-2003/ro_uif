@@ -199,7 +199,10 @@ class Visualizador:
             else:
                 w = 1
             
-            # Agregar arista dirigida con etiqueta de monto visible en la línea
+            # Agregar arista dirigida.
+            # 'label' se usa para el texto en la arista. 
+            # 'title' es el tooltip.
+            # Usamos align: 'middle' y background para evitar superposiciones visuales con la linea
             G.add_edge(origen, destino, weight=w, title=f"Monto: {w:,.2f}", label=f"{w:,.0f}")
         
         net = Network(height='750px', width='100%', bgcolor='#222222', font_color='white', directed=True)
@@ -220,6 +223,7 @@ class Visualizador:
             node['size'] = total_degree * 5 + 10
             
             # Tooltip con HTML (title)
+            # Nota: vis.js soporta HTML en title por defecto.
             tooltip = (
                 f"<b>Nodo:</b> {node_id}<br>"
                 f"<b>Actividad:</b> {actividad}<br>"
@@ -235,28 +239,40 @@ class Visualizador:
                 'background': '#97C2FC',
                 'highlight': {'border': '#2B7CE9', 'background': '#D2E5FF'}
             }
+            # Forzamos interpretación correcta si aplica
+            node['font'] = {'multi': 'html'}
         
         # Configurar aristas (flechas)
         for edge in net.edges:
             edge['arrows'] = 'to'
             edge['width'] = edge.get('weight', 1) / 1000
             if edge['width'] < 1: edge['width'] = 1
+            
             # Configuración de fuente para la etiqueta de la arista
-            edge['font'] = {'align': 'middle', 'size': 10, 'color': '#adff2f', 'strokeWidth': 0}
+            edge['font'] = {
+                'align': 'middle', 
+                'size': 10, 
+                'color': '#adff2f', 
+                'background': '#222222',
+                'strokeWidth': 0
+            }
+            # Smooth type dynamic ayuda a separar aristas multiples
+            edge['smooth'] = {'type': 'dynamic'}
         
         # Configuración de física y opciones para mayor separación
+        # Agregamos "hover": true en interaction para tooltips
         options = '''
         {
           "physics": {
             "barnesHut": {
-              "gravitationalConstant": -80000,
-              "centralGravity": 0.1,
-              "springLength": 250,
-              "springConstant": 0.01,
+              "gravitationalConstant": -10000,
+              "centralGravity": 0.5,
+              "springLength": 50,
+              "springConstant": 0.05,
               "damping": 0.09,
-              "avoidOverlap": 1
+              "avoidOverlap": 0.5
             },
-            "maxVelocity": 40,
+            "maxVelocity": 50,
             "minVelocity": 0.1,
             "solver": "barnesHut",
             "stabilization": {
@@ -269,9 +285,9 @@ class Visualizador:
           },
           "edges": {
             "smooth": {
-              "type": "cubicBezier",
-              "forceDirection": "vertical",
-              "roundness": 0.4
+              "type": "dynamic",
+              "forceDirection": "none",
+              "roundness": 0.5
             },
             "color": {"inherit": "from"}
           },

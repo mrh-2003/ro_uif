@@ -874,7 +874,9 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
                 valor_tiempo = st.slider("Ventana de tiempo (días)", 1, 7, 1, key="slider_day")
                 minutos_totales = valor_tiempo * 24 * 60
         
-        df_casos, df_edges, stats = analizador.reporte_12_operaciones_simultaneas(minutos_totales)
+        min_ops = st.slider("Mínimo de Operaciones Simultáneas", 1, 20, 5, help="Filtra casos con menos de N operaciones involucradas.")
+        
+        df_casos, df_edges, stats = analizador.reporte_12_operaciones_simultaneas(minutos_totales, min_ops=min_ops)
         
         if not df_casos.empty:
             st.divider()
