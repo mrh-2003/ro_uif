@@ -306,121 +306,252 @@ class AnalizadorUIF:
         
         return resultado
     
-    def reporte_12_operaciones_simultaneas(self, minutos=30):
-        # Asegurar ordenamiento
+    def reporte_12_operaciones_simultaneas(self, minutos=30, tolerancia_porcentaje=10):
+        # Clasificación estricta de operaciones
+        INFLOWS = [
+            'TRANSFERENCIAS ENTRE CUENTAS DE DIFERENTES ENTIDADES (RECEPCION DE FONDOS)',
+            'COBRO DE CHEQUES DE OTRO BANCO (ABONO O PAGO)',
+            'GIROS NACIONALES (RECEPCION DE FONDOS)',
+            'COBRO DE CHEQUES DEL MISMO BANCO',
+            'TRANSFERENCIAS INTERNACIONALES (RECEPCION DE FONDOS)',
+            'DEPOSITOS EN CUENTA CORRIENTE',
+            'DEPOSITOS EN CUENTA DE AHORRO',
+            'DEPOSITOS CONSTITUIDOS POR TITULOS VALORES (CERTIFICADOS BANCARIOS EN MONEDA NACIONAL Y MONEDA EXTRANJERA)'
+        ]
+        
+        OUTFLOWS = [
+            'TRANSFERENCIAS ENTRE CUENTAS DE DIFERENTES ENTIDADES (ENVIO DE FONDOS)',
+            'GIROS NACIONALES (ENVIO DE FONDOS)',
+            'TRANSFERENCIAS INTERNACIONALES (ENVIO DE FONDOS)',
+            'AMORTIZACION DE PRESTAMOS',
+            'AMORTIZACION ANTICIPADA DE PRESTAMOS',
+            'DEPOSITOS EN CUENTAS DE PLAZO FIJO',
+            'RETIROS DE DEPOSITOS',
+            'COMPRA DE CHEQUES DE GERENCIA',
+            'RETIRO TOTAL DE DEPOSITOS'
+        ]
+
+        def get_tipo_flujo(desc):
+            d = str(desc).strip()
+            if d in INFLOWS: return 'ENTRADA'
+            if d in OUTFLOWS: return 'SALIDA'
+            return 'NEUTRO'
+
         df_sorted = self.df.sort_values(['CODUNICOCLI_13_enc', 'fec_operacion', 'hora_operacion'])
         
-        resultados = []
-        
-        # Palabras clave para identificar tipos de operación
-        def es_ingreso(descripcion):
-            d = str(descripcion).upper()
-            return any(x in d for x in ['RECEPCION', 'DEPOSITO', 'ABONO', 'CREDITO', 'ENTRADA'])
+        # Preparar datetime
+        try:
+            fec = df_sorted['fec_operacion'].astype(str)
+            hora = df_sorted['hora_operacion'].astype(str)
+            df_sorted['datetime'] = pd.to_datetime(fec + ' ' + hora, errors='coerce')
+        except Exception:
+            return pd.DataFrame(), pd.DataFrame(), {}
 
-        def es_egreso(descripcion):
-            d = str(descripcion).upper()
-            if 'TRANSFERENCIA' in d and not any(x in d for x in ['RECEPCION', 'ENTRADA', 'RECIBID']):
-                return True
-            return any(x in d for x in ['RETIRO', 'ENVIO', 'PAGO', 'DEBITO', 'SALIDA', 'CHEQUE'])
+        df_sorted = df_sorted.dropna(subset=['datetime'])
         
+        casos = []
+        edges = []
+        
+        # Iterar por cliente
         for cliente in df_sorted['CODUNICOCLI_13_enc'].unique():
-            df_cliente = df_sorted[df_sorted['CODUNICOCLI_13_enc'] == cliente].copy()
+            df_cli = df_sorted[df_sorted['CODUNICOCLI_13_enc'] == cliente].copy()
+            df_cli['flujo'] = df_cli['destipopereportesbs'].apply(get_tipo_flujo)
             
-            # Crear columna datetime robusta
-            try:
-                fec = df_cliente['fec_operacion'].astype(str)
-                hora = df_cliente['hora_operacion'].astype(str)
-                df_cliente['datetime'] = pd.to_datetime(fec + ' ' + hora, errors='coerce')
-            except Exception:
-                continue
-                
-            df_cliente = df_cliente.dropna(subset=['datetime'])
+            # Reset index para poder usar indices numéricos para control
+            df_cli = df_cli.reset_index(drop=True)
             
-            if df_cliente.empty:
-                continue
-
-            for i in range(len(df_cliente) - 1):
-                op1 = df_cliente.iloc[i]
-                desc1 = op1['destipopereportesbs']
+            used_indices = set()
+            indices_list = df_cli.index.tolist()
+            
+            # --- PRIORIDAD 1: ENTRADA + SALIDA(S) SIMILARES ---
+            for i in indices_list:
+                if i in used_indices: continue
                 
-                # Solo analizamos si la operación inicial es un INGRESO
-                if not es_ingreso(desc1):
+                row_in = df_cli.iloc[i]
+                if row_in['flujo'] != 'ENTRADA': continue
+                
+                # Buscar salidas en ventana de tiempo
+                t_start = row_in['datetime']
+                t_end = t_start + timedelta(minutes=minutos)
+                
+                # Candidatos: Salidas, en rango de tiempo, no usadas
+                mask_candidates = (
+                    (df_cli['datetime'] >= t_start) & 
+                    (df_cli['datetime'] <= t_end) & 
+                    (df_cli['flujo'] == 'SALIDA') & 
+                    (~df_cli.index.isin(used_indices))
+                )
+                
+                candidates = df_cli[mask_candidates]
+                
+                if candidates.empty:
                     continue
                 
-                tiempo_limite = op1['datetime'] + timedelta(minutes=minutos)
+                monto_in = row_in['mtotrx']
+                min_match = monto_in * (1 - tolerancia_porcentaje/100)
+                max_match = monto_in * (1 + tolerancia_porcentaje/100)
                 
-                # Buscar operaciones posteriores dentro de la ventana de tiempo (EGRESOS)
-                ops_candidatas = df_cliente[
-                    (df_cliente['datetime'] > op1['datetime']) & 
-                    (df_cliente['datetime'] <= tiempo_limite)
-                ]
+                total_out = candidates['mtotrx'].sum()
                 
-                if ops_candidatas.empty:
-                    continue
+                if min_match <= total_out <= max_match:
+                    # Match encontrado!
+                    used_indices.add(i)
+                    used_indices.update(candidates.index.tolist())
                     
-                ops_egresos = ops_candidatas[ops_candidatas['destipopereportesbs'].apply(es_egreso)]
-                
-                if ops_egresos.empty:
-                    continue
-                
-                monto_dispuesto = ops_egresos['mtotrx'].sum()
-                
-                if op1['mtotrx'] <= 0:
-                    continue
-                    
-                porcentaje = (monto_dispuesto / op1['mtotrx'] * 100)
-                
-                if porcentaje >= 50:
-                    # Recopilar información detallada
-                    ops_detalle = ops_egresos['destipopereportesbs'].value_counts().to_dict()
-                    str_ops = ", ".join([f"{k} (x{v})" for k, v in ops_detalle.items()])
-                    
-                    # Nuevos campos solicitados:
-                    # 1. Ordenante (Origen): Quien envió el dinero al cliente en op1
-                    ordenante_origen = op1.get('doc_ordenante_encriptado', 'No registrado')
-                    if pd.isna(ordenante_origen): ordenante_origen = 'No registrado'
-                    
-                    # 2. Beneficiarios (Destino): A quienes envió el dinero el cliente en ops_egresos
-                    if 'doc_beneficiario_encriptado' in ops_egresos.columns:
-                        lista_ben = ops_egresos['doc_beneficiario_encriptado'].dropna().unique().tolist()
-                        beneficiarios_destino = ", ".join([str(x) for x in lista_ben])
-                    else:
-                        beneficiarios_destino = "No disponible"
-                        
-                    # 3. Horas de salida
-                    lista_horas = ops_egresos['hora_operacion'].astype(str).unique().tolist()
-                    horas_salida = ", ".join(lista_horas)
-
-                    resultados.append({
-                        'cliente': cliente,
-                        'fecha_recepcion': op1['fec_operacion'],
-                        'hora_recepcion': op1['hora_operacion'],
-                        'ordenante_origen': ordenante_origen,     # NUEVO: De quién recibió
-                        'tipo_recepcion': desc1,
-                        'monto_recibido': op1['mtotrx'],
-                        'monto_dispuesto': monto_dispuesto,
-                        'porcentaje_dispuesto': round(porcentaje, 2),
-                        'horas_salida': horas_salida,             # NUEVO: Hora salida
-                        'beneficiarios_destino': beneficiarios_destino, # NUEVO: A quién envió
-                        'tiempo_transcurrido_min': round((ops_egresos['datetime'].max() - op1['datetime']).total_seconds() / 60, 1),
-                        'cantidad_operaciones_salida': len(ops_egresos),
-                        'detalle_salidas': str_ops,
-                        'alerta': 'Posible Testaferro/Intermediario'
+                    # Registrar Caso
+                    caso_id = f"{cliente}-{i}-P1"
+                    desc_salidas = ", ".join(candidates['destipopereportesbs'].unique())
+                    casos.append({
+                        'CasoID': caso_id,
+                        'Prioridad': 1,
+                        'Cliente': cliente,
+                        'Tipo': 'Simultanea (Entrada->Salida)',
+                        'Fecha': row_in['fec_operacion'],
+                        'Hora': row_in['hora_operacion'],
+                        'Monto Entrante': monto_in,
+                        'Monto Saliente': total_out,
+                        'Diferencia %': round(abs(monto_in - total_out)/monto_in * 100, 2) if monto_in > 0 else 0,
+                        'Detalle': f"Entrada: {row_in['destipopereportesbs']} | Salidas: {desc_salidas}"
                     })
+                    
+                    # Registrar Edges (Entrada -> Cliente -> Salidas)
+                    origen = row_in.get('doc_ordenante_encriptado', 'Desconocido')
+                    if pd.isna(origen): origen = 'Desconocido'
+                    
+                    edges.append({
+                        'source': str(origen),
+                        'target': str(cliente),
+                        'amount': float(monto_in),
+                        'label': 'Entrada (P1)',
+                        'caso_id': caso_id
+                    })
+                    
+                    for _, row_out in candidates.iterrows():
+                        destino = row_out.get('doc_beneficiario_encriptado', 'Desconocido')
+                        if pd.isna(destino): destino = 'Desconocido'
+                        edges.append({
+                            'source': str(cliente),
+                            'target': str(destino),
+                            'amount': float(row_out['mtotrx']),
+                            'label': 'Salida (P1)',
+                            'caso_id': caso_id
+                        })
+
+            # --- PRIORIDAD 2: SOLO SALIDAS CASI INSTANTANEAS (Ráfaga) ---
+            # Buscamos ráfagas de al menos 2 salidas en la ventana
+            for i in indices_list:
+                if i in used_indices: continue
+                
+                row = df_cli.iloc[i]
+                if row['flujo'] != 'SALIDA': continue
+                
+                t_start = row['datetime']
+                t_end = t_start + timedelta(minutes=minutos)
+                
+                mask_group = (
+                    (df_cli['datetime'] >= t_start) & 
+                    (df_cli['datetime'] <= t_end) & 
+                    (df_cli['flujo'] == 'SALIDA') & 
+                    (~df_cli.index.isin(used_indices))
+                )
+                
+                group = df_cli[mask_group]
+                
+                # Deben ser al menos 2 para considerar "ráfaga" o "simultáneas" si no hay entrada
+                if len(group) >= 2:
+                    used_indices.update(group.index.tolist())
+                    
+                    total_amt = group['mtotrx'].sum()
+                    caso_id = f"{cliente}-{i}-P2"
+                    
+                    casos.append({
+                        'CasoID': caso_id,
+                        'Prioridad': 2,
+                        'Cliente': cliente,
+                        'Tipo': 'Ráfaga Salidas',
+                        'Fecha': row['fec_operacion'],
+                        'Hora': row['hora_operacion'],
+                        'Monto Entrante': 0,
+                        'Monto Saliente': total_amt,
+                        'Diferencia %': 0,
+                        'Detalle': f"{len(group)} salidas detectadas en {minutos} min"
+                    })
+                    
+                    for _, row_out in group.iterrows():
+                        destino = row_out.get('doc_beneficiario_encriptado', 'Desconocido')
+                        if pd.isna(destino): destino = 'Desconocido'
+                        edges.append({
+                            'source': str(cliente),
+                            'target': str(destino),
+                            'amount': float(row_out['mtotrx']),
+                            'label': 'Salida (P2)',
+                            'caso_id': caso_id
+                        })
+
+            # --- PRIORIDAD 3: SOLO ENTRADAS CASI INSTANTANEAS (Ráfaga) ---
+            for i in indices_list:
+                if i in used_indices: continue
+                
+                row = df_cli.iloc[i]
+                if row['flujo'] != 'ENTRADA': continue
+                
+                t_start = row['datetime']
+                t_end = t_start + timedelta(minutes=minutos)
+                
+                mask_group = (
+                    (df_cli['datetime'] >= t_start) & 
+                    (df_cli['datetime'] <= t_end) & 
+                    (df_cli['flujo'] == 'ENTRADA') & 
+                    (~df_cli.index.isin(used_indices))
+                )
+                
+                group = df_cli[mask_group]
+                
+                if len(group) >= 2:
+                    used_indices.update(group.index.tolist())
+                    
+                    total_amt = group['mtotrx'].sum()
+                    caso_id = f"{cliente}-{i}-P3"
+                    
+                    casos.append({
+                        'CasoID': caso_id,
+                        'Prioridad': 3,
+                        'Cliente': cliente,
+                        'Tipo': 'Ráfaga Entradas',
+                        'Fecha': row['fec_operacion'],
+                        'Hora': row['hora_operacion'],
+                        'Monto Entrante': total_amt,
+                        'Monto Saliente': 0,
+                        'Diferencia %': 0,
+                        'Detalle': f"{len(group)} entradas detectadas en {minutos} min"
+                    })
+                    
+                    for _, row_in_g in group.iterrows():
+                        origen = row_in_g.get('doc_ordenante_encriptado', 'Desconocido')
+                        if pd.isna(origen): origen = 'Desconocido'
+                        edges.append({
+                            'source': str(origen),
+                            'target': str(cliente),
+                            'amount': float(row_in_g['mtotrx']),
+                            'label': 'Entrada (P3)',
+                            'caso_id': caso_id
+                        })
+
+        df_casos = pd.DataFrame(casos)
+        df_edges = pd.DataFrame(edges)
         
-        df_resultado = pd.DataFrame(resultados)
+        if df_casos.empty:
+            stats = {'total_casos': 0}
+        else:
+            stats = {
+                'total_casos': len(df_casos),
+                'prioridad_1_pares': len(df_casos[df_casos['Prioridad'] == 1]),
+                'prioridad_2_salidas': len(df_casos[df_casos['Prioridad'] == 2]),
+                'prioridad_3_entradas': len(df_casos[df_casos['Prioridad'] == 3]),
+                'monto_total_movido': df_casos['Monto Saliente'].sum() + df_casos['Monto Entrante'].sum()
+            }
         
-        if df_resultado.empty:
-            return pd.DataFrame(), {}
-        
-        stats = {
-            'total_casos': len(df_resultado),
-            'promedio_porcentaje': df_resultado['porcentaje_dispuesto'].mean(),
-            'monto_total_recibido': df_resultado['monto_recibido'].sum(),
-            'monto_total_dispuesto': df_resultado['monto_dispuesto'].sum()
-        }
-        
-        return df_resultado, stats
+        return df_casos, df_edges, stats
     
     def reporte_13_ranking_operaciones(self):
         ranking_cantidad = self.df.groupby('destipopereportesbs').agg({

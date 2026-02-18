@@ -874,32 +874,37 @@ def ejecutar_analisis(tipo_analisis, analizador, viz, df_operaciones):
                 valor_tiempo = st.slider("Ventana de tiempo (días)", 1, 7, 1, key="slider_day")
                 minutos_totales = valor_tiempo * 24 * 60
         
-        resultado, stats = analizador.reporte_12_operaciones_simultaneas(minutos_totales)
+        df_casos, df_edges, stats = analizador.reporte_12_operaciones_simultaneas(minutos_totales)
         
-        if not resultado.empty:
-            col1, col2, col3 = st.columns(3)
+        if not df_casos.empty:
+            st.divider()
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("Total Casos", f"{stats['total_casos']:,}")
             with col2:
-                st.metric("Promedio % Dispuesto", f"{stats['promedio_porcentaje']:.2f}%")
+                st.metric("P1: In/Out Similares", f"{stats.get('prioridad_1_pares', 0):,}")
             with col3:
-                st.metric("Monto Total Dispuesto", f"${stats['monto_total_dispuesto']:,.2f}")
+                st.metric("P2: Ráfaga Salidas", f"{stats.get('prioridad_2_salidas', 0):,}")
+            with col4:
+                st.metric("P3: Ráfaga Entradas", f"{stats.get('prioridad_3_entradas', 0):,}")
             
-            st.dataframe(resultado, use_container_width=True)
-            descargar_excel(resultado, "operaciones_simultaneas.xlsx")
+            st.metric("Monto Total Involucrado", f"${stats['monto_total_movido']:,.2f}")
             
-            # Corrección aplicada aquí: size_col='cantidad_operaciones_salida'
-            fig = viz.crear_scatter(
-                resultado,
-                'monto_recibido',
-                'porcentaje_dispuesto',
-                'Relación Monto Recibido vs % Dispuesto',
-                size_col='cantidad_operaciones_salida',
-                color_col='porcentaje_dispuesto'
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            st.subheader("🕸️ Grafo de Relaciones Detectadas")
+            if not df_edges.empty:
+                net = viz.crear_grafo_red(df_edges, 'source', 'target', 'amount')
+                with open('temp_graph.html', 'r', encoding='utf-8') as f:
+                    html_string = f.read()
+                components.html(html_string, height=800)
+            else:
+                st.info("No se generaron bordes para el grafo.")
+
+            st.subheader("📋 Detalle de Casos")
+            st.dataframe(df_casos, use_container_width=True)
+            descargar_excel(df_casos, "operaciones_simultaneas.xlsx")
+            
         else:
-            st.info("No se encontraron operaciones simultáneas")
+            st.info("No se encontraron operaciones simultáneas bajo los criterios definidos.")
     
     elif tipo_analisis == "Ranking de Operaciones":
         st.header("📋 Ranking de Tipos de Operaciones")
@@ -1358,7 +1363,7 @@ def pagina_informe():
                         informe.agregar_tabla(resultado, "Cuentas Beneficiarias Comunes")
                 
                 if reportes["Operaciones Simultáneas"]:
-                    resultado, stats = analizador.reporte_12_operaciones_simultaneas()
+                    resultado, _, stats = analizador.reporte_12_operaciones_simultaneas()
                     if not resultado.empty:
                         informe.agregar_estadisticas(stats, "Estadísticas Operaciones Simultáneas")
                         informe.agregar_tabla(resultado, "Operaciones Simultáneas")
